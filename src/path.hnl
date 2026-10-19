@@ -5,7 +5,7 @@
 --- `str` package. `resolve` currently normalizes by joining; symlink
 --- resolution via `realpath(3)` is left for a later FFI extension.
 
-from "../grade" import { Effect }
+from "../../lib-grade/src" import { Grade }
 from "str" import * as str
 
 --- Join path components with a forward slash.
