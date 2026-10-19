@@ -4,7 +4,7 @@
 --- `os` time is the same as the platform wall-clock time, so this module
 --- delegates directly to `handl-packages/time-c`.
 
-from "../time-c" import { now_ms }
+from "../../lib-time-c/src" import { now_ms }
 
 --- Current wall-clock time as epoch milliseconds.
 --- @returns {Number - milliseconds since the Unix epoch}
