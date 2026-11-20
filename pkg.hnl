@@ -1,2 +1,2 @@
 -- lib-os-c: package manifest.
-{ modules: ["os-c"] }
+{ modules: ["os-c"], description: "C backend for the os ports (path, env, time).", license: "MIT" }
