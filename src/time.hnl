@@ -3,6 +3,9 @@
 --- @details
 --- `os` time is the same as the platform wall-clock time, so this module
 --- delegates directly to `handl-packages/time-c`.
+---
+--- TODO(posix): time is a POSIX op — a direct clock impl may land here
+--- later; for now `posix-c` delegates to `time-c`.
 
 from "time-c" import { now_ms }
 

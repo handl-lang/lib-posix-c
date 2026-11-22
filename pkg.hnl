@@ -1,2 +1,2 @@
--- lib-os-c: package manifest.
-{ modules: ["os-c"], deps: { grade: "branch:main", "time-c": "branch:main" }, description: "C backend for the os ports (path, env, time).", license: "MIT" }
+-- lib-posix-c: package manifest.
+{ modules: ["posix-c"], deps: { grade: "branch:main", posix: "branch:main", "time-c": "branch:main" }, description: "C backend for the POSIX ports (path, env, time, fs).", license: "MIT" }

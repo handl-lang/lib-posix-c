@@ -1,0 +1,332 @@
+--- fs -- POSIX filesystem helpers over libc via `ffi.call`.
+---
+--- Absorbed from the standalone `lib-fs` package into `posix-c` —
+--- the `fs` surface is part of the POSIX backend contract.
+---
+--- The whole surface is `libc.so.6` — no libpython, no temp files, no
+--- shell: `open`/`read`/`pwrite`/`close` for file contents,
+--- `access`/`stat`/`lstat`/`opendir`/`readdir`/`closedir` for metadata
+--- and directory listing, and `unlink`/`rmdir`/`rename`/`mkdir` for
+--- mutation. Every call checks its return and raises
+--- `error.raise("fs: <op>: <strerror>")` on failure, so the exports
+--- return plain values.
+---
+--- Platform: linux x86_64 glibc. `struct stat` is 144 bytes and
+--- `struct dirent.d_name` sits at offset 19 — `STAT_DESC` and
+--- `DIRENT_NAME_OFF` carry those layouts explicitly (verified against
+--- the host headers, not guessed).
+---
+--- `ffi`, `math`, `type`, `error` are host modules on the stdlib
+--- chain — reached by qualified call with no import line (the intl-c
+--- convention).
+
+from "bytes" import * as bytesm
+
+LIBC := "libc.so.6"
+
+--- open(2) flags (linux generic values).
+O_RDONLY := 0
+O_WRONLY := 1
+O_CREAT := 64
+O_TRUNC := 512
+
+--- access(2) mode: existence only.
+F_OK := 0
+
+--- mkdir(2) mode 0755 / open(2) mode 0644.
+MODE_0755 := 493
+MODE_0644 := 420
+
+--- errno retried rather than raised.
+EINTR := 4
+
+--- stat(2) mode bits for the is_dir/is_file/is_symlink predicates.
+S_IFMT := 61440
+S_IFDIR := 16384
+S_IFREG := 32768
+S_IFLNK := 40960
+
+--- struct dirent: `d_name` offset on x86_64 — d_ino u64 + d_off i64 +
+--- d_reclen u16 + d_type u8 = 19 bytes of header before the name.
+DIRENT_NAME_OFF := 19
+
+--- stat(2)/lstat(2) out-struct descriptor. Every field carries its real
+--- x86_64 glibc `struct stat` offset; the three trailing `__r*` i64
+--- slots pad the tail out to sizeof(struct stat) = 144 so the callee's
+--- write stays inside the allocated buffer. Read back as `s.buf.<name>`.
+STAT_DESC := "out_struct:{st_dev:u64@0:8,st_ino:u64@8:8,st_nlink:u64@16:8,st_mode:u32@24:4,st_uid:u32@28:4,st_gid:u32@32:4,st_rdev:u64@40:8,st_size:i64@48:8,st_blksize:i64@56:8,st_blocks:i64@64:8,st_atime_sec:i64@72:8,st_atime_nsec:i64@80:8,st_mtime_sec:i64@88:8,st_mtime_nsec:i64@96:8,st_ctime_sec:i64@104:8,st_ctime_nsec:i64@112:8,__r0:i64@120:8,__r1:i64@128:8,__r2:i64@136:8}"
+
+--- `strerror(errno)` — the C message for an errno value, or a bare
+--- "errno <n>" when strerror returns NULL.
+strerror := (n) ~> do {
+  s := ffi.call(LIBC, "strerror", [n], ["i32"], "cstr", false)
+  if s == null { "errno " + type.to_string(n) } else { s }
+}
+
+--- Raise `fs: <what>: <strerror(errno)>`. Must run immediately after
+--- the failing call — `ffi.errno()` reads the thread's errno slot.
+fs_err := (what) ~> do {
+  e := ffi.errno()
+  error.raise("fs: " + what + ": " + strerror(e))
+}
+
+c_open := (path, flags, mode) ~>
+  ffi.call(LIBC, "open", [path, flags, mode],
+    ["cstr", "i32", "i32"], "i32", false)
+
+c_close := (fd) ~>
+  ffi.call(LIBC, "close", [fd], ["i32"], "i32", false)
+
+--- read(2) loop until EOF. `out_buf` expands to (ptr, len) and hands
+--- back `{ ret, buf }` — `buf` trimmed to the byte count. Returns
+--- `{ data, bad }`: `bad` is the errno on failure (0 on success).
+read_all := (fd) ~> while { acc: bytesm.from_list([]), bad: 0 } {
+  (acc, bad) ~> if bad != 0 {
+    { out: { data: acc, bad: bad } }
+  } else {
+    do {
+      r := ffi.call(LIBC, "read", [fd],
+        ["i32", "out_buf:65536"], "i64", false)
+      if r.ret > 0 {
+        { state: { acc: bytesm.concat(acc, r.buf), bad: 0 } }
+      } else if r.ret == 0 {
+        { out: { data: acc, bad: 0 } }
+      } else {
+        do {
+          e := ffi.errno()
+          if e == EINTR {
+            { state: { acc: acc, bad: 0 } }
+          } else {
+            { out: { data: acc, bad: e } }
+          }
+        }
+      }
+    }
+  }
+}
+
+--- pwrite(2) loop: `in_buf` hands C the (ptr, len) pair for the slice
+--- at `off`; the loop advances by the byte count C reports. Returns
+--- the errno on failure, 0 on success, -1 on a zero-byte write (which
+--- would otherwise spin forever).
+write_all := (fd, b) ~> do {
+  n := bytesm.len(b)
+  while { off: 0, bad: 0 } {
+    (off, bad) ~> if bad != 0 || off >= n {
+      { out: bad }
+    } else {
+      do {
+        chunk := bytesm.slice(b, off, n - off)
+        r := ffi.call(LIBC, "pwrite", [fd, chunk, off],
+          ["i32", "in_buf", "i64"], "i64", false)
+        if r > 0 {
+          { state: { off: off + r, bad: 0 } }
+        } else if r == 0 {
+          { out: -1 }
+        } else {
+          do {
+            e := ffi.errno()
+            if e == EINTR {
+              { state: { off: off, bad: 0 } }
+            } else {
+              { out: e }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+--- opendir(3)/readdir(3)/closedir(3) collection. `readdir` returns a
+--- `struct dirent *` — the `d_name` cstr lives at `DIRENT_NAME_OFF`
+--- into the struct, read back through `ffi.read`. NULL means end of
+--- directory (readdir also NULLs on error; a valid DIR* from opendir
+--- makes that vanishingly rare — the errno is not consulted). "."
+--- and ".." are filtered.
+dir_collect := (d) ~> while { names: [], eof: false } {
+  (names, eof) ~> if eof {
+    { out: names }
+  } else {
+    do {
+      e := ffi.call(LIBC, "readdir", [d], ["ptr"], "ptr", false)
+      if e == 0 {
+        { state: { names: names, eof: true } }
+      } else {
+        do {
+          nm := ffi.read(e + DIRENT_NAME_OFF, "cstr")
+          if nm == "." || nm == ".." {
+            { state: { names: names, eof: false } }
+          } else {
+            { state: { names: [...names, nm], eof: false } }
+          }
+        }
+      }
+    }
+  }
+}
+
+--- stat(2)/lstat(2) shared path. Returns the shaped record, or null
+--- when the syscall fails — `stat`/`lstat` raise on null while
+--- `is_dir`/`is_file` read null as false (a missing path is neither).
+stat_maybe := (path, sym) ~> do {
+  s := ffi.call(LIBC, sym, [path], ["cstr", STAT_DESC], "i32", false)
+  if s.ret != 0 {
+    null
+  } else {
+    do {
+      b := s.buf
+      { size: b.st_size,
+        mode: b.st_mode,
+        dev: b.st_dev,
+        ino: b.st_ino,
+        nlink: b.st_nlink,
+        uid: b.st_uid,
+        gid: b.st_gid,
+        rdev: b.st_rdev,
+        blksize: b.st_blksize,
+        blocks: b.st_blocks,
+        is_dir: math.bit_and(b.st_mode, S_IFMT) == S_IFDIR,
+        is_file: math.bit_and(b.st_mode, S_IFMT) == S_IFREG,
+        is_symlink: math.bit_and(b.st_mode, S_IFMT) == S_IFLNK,
+        atime_sec: b.st_atime_sec, atime_nsec: b.st_atime_nsec,
+        mtime_sec: b.st_mtime_sec, mtime_nsec: b.st_mtime_nsec,
+        ctime_sec: b.st_ctime_sec, ctime_nsec: b.st_ctime_nsec,
+        atime_ms: b.st_atime_sec * 1000
+          + math.floor_div(b.st_atime_nsec, 1000000),
+        mtime_ms: b.st_mtime_sec * 1000
+          + math.floor_div(b.st_mtime_nsec, 1000000),
+        ctime_ms: b.st_ctime_sec * 1000
+          + math.floor_div(b.st_ctime_nsec, 1000000) }
+    }
+  }
+}
+
+--- Read a whole file as Bytes — binary-safe; `bytes.utf8_decode` for
+--- text. Raises `fs: read_file(<path>): <err>` on failure.
+export read_file := (path) ~> do {
+  fd := c_open(path, O_RDONLY, 0)
+  if fd < 0 {
+    fs_err("read_file(" + path + "): open")
+  } else {
+    do {
+      r := read_all(fd)
+      _ := c_close(fd)
+      if r.bad != 0 {
+        error.raise("fs: read_file(" + path + "): read: "
+          + strerror(r.bad))
+      } else {
+        r.data
+      }
+    }
+  }
+}
+
+--- Write `data` (String or Bytes) to `path`, truncating or creating
+--- with mode 0644. Returns the byte count written; raises on failure.
+export write_file := (path, data) ~> do {
+  b := if type.of(data) == "string" {
+    bytesm.utf8_encode(data)
+  } else if type.of(data) == "bytes" {
+    data
+  } else {
+    error.raise("fs: write_file(" + path
+      + "): data must be String or Bytes")
+  }
+  n := bytesm.len(b)
+  fd := c_open(path, O_WRONLY + O_CREAT + O_TRUNC, MODE_0644)
+  if fd < 0 {
+    fs_err("write_file(" + path + "): open")
+  } else {
+    do {
+      w := write_all(fd, b)
+      _ := c_close(fd)
+      if w != 0 {
+        if w > 0 {
+          error.raise("fs: write_file(" + path + "): " + strerror(w))
+        } else {
+          error.raise("fs: write_file(" + path + "): short write")
+        }
+      } else {
+        n
+      }
+    }
+  }
+}
+
+--- True when `path` exists and is searchable — access(2, F_OK).
+export exists := (path) ~> do {
+  r := ffi.call(LIBC, "access", [path, F_OK], ["cstr", "i32"], "i32", false)
+  r == 0
+}
+
+--- List the names in directory `path` — opendir/readdir/closedir with
+--- "." and ".." filtered. Names are Strings; invalid-UTF-8 names fault
+--- inside `ffi.read`'s cstr decode. Raises on opendir failure.
+export list_dir := (path) ~> do {
+  d := ffi.call(LIBC, "opendir", [path], ["cstr"], "ptr", false)
+  if d == 0 {
+    fs_err("list_dir(" + path + "): opendir")
+  } else {
+    do {
+      names := dir_collect(d)
+      _ := ffi.call(LIBC, "closedir", [d], ["ptr"], "i32", false)
+      names
+    }
+  }
+}
+
+--- stat(2) record for `path` (follows symlinks): `{ size, mode,
+--- is_dir, is_file, is_symlink, dev, ino, nlink, uid, gid, rdev,
+--- blksize, blocks, atime_*/mtime_*/ctime_* }` — the `*_sec`/`*_nsec`
+--- pairs plus `*_ms` millisecond timestamps. Raises on failure.
+export stat := (path) ~> do {
+  s := stat_maybe(path, "stat")
+  if s == null { fs_err("stat(" + path + ")") } else { s }
+}
+
+--- lstat(2) — same record as `stat`, but symlinks are reported rather
+--- than followed (`is_symlink` is the case it exists for).
+export lstat := (path) ~> do {
+  s := stat_maybe(path, "lstat")
+  if s == null { fs_err("lstat(" + path + ")") } else { s }
+}
+
+--- True when `path` stats as a directory; false when it is missing or
+--- not a directory (stat failure reads as false, like os.path.isdir).
+export is_dir := (path) ~> do {
+  s := stat_maybe(path, "stat")
+  if s == null { false } else { s.is_dir }
+}
+
+--- True when `path` stats as a regular file; false otherwise.
+export is_file := (path) ~> do {
+  s := stat_maybe(path, "stat")
+  if s == null { false } else { s.is_file }
+}
+
+--- unlink(2) — remove a file (or symlink). Raises on failure; removing
+--- a directory needs `rmdir`.
+export remove := (path) ~> do {
+  r := ffi.call(LIBC, "unlink", [path], ["cstr"], "i32", false)
+  if r != 0 { fs_err("remove(" + path + ")") } else { null }
+}
+
+--- rmdir(2) — remove an empty directory. Raises on failure.
+export rmdir := (path) ~> do {
+  r := ffi.call(LIBC, "rmdir", [path], ["cstr"], "i32", false)
+  if r != 0 { fs_err("rmdir(" + path + ")") } else { null }
+}
+
+--- rename(2) — move/rename `old` to `new`. Raises on failure.
+export rename := (src, dst) ~> do {
+  r := ffi.call(LIBC, "rename", [src, dst], ["cstr", "cstr"], "i32", false)
+  if r != 0 { fs_err("rename(" + src + " -> " + dst + ")") } else { null }
+}
+
+--- mkdir(2) — create a single directory level with mode 0755. Raises
+--- on failure; there is no makedirs yet.
+export mkdir := (path) ~> do {
+  r := ffi.call(LIBC, "mkdir", [path, MODE_0755], ["cstr", "i32"], "i32", false)
+  if r != 0 { fs_err("mkdir(" + path + ")") } else { null }
+}
