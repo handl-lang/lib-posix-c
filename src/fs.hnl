@@ -255,7 +255,7 @@ export write_file := (path, data) ~> do {
 }
 
 --- True when `path` exists and is searchable — access(2, F_OK).
-export exists := (path) ~> do {
+export path_exists := (path) ~> do {
   r := ffi.call(LIBC, "access", [path, F_OK], ["cstr", "i32"], "i32", false)
   r == 0
 }
