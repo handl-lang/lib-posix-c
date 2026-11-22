@@ -1,0 +1,34 @@
+--- Low-level libc `clock_gettime` reader for the posix-c backend.
+--- @details
+--- Reads the given `clock_id` through `ffi.call` into `libc.so.6`
+--- `clock_gettime` and returns the raw time as an integer number of
+--- nanoseconds. `time.hnl` builds the posix clock surface on it; the
+--- `clock_gettime` host module (plugin-lib-stdlib `MODULES` table)
+--- exposes `read_ns` directly.
+---
+--- `ffi`, `error` and `type` are host modules on the stdlib chain —
+--- reached by qualified call with no import line (the fs.hnl
+--- convention).
+
+LIBC := "libc.so.6"
+
+--- `strerror(errno)` — the C message for an errno value, or a bare
+--- "errno <n>" when strerror returns NULL.
+strerror := (n) ~> do {
+  s := ffi.call(LIBC, "strerror", [n], ["i32"], "cstr", false)
+  if s == null { "errno " + type.to_string(n) } else { s }
+}
+
+--- Nanoseconds on the given clock.
+--- @param {clock_id} - CLOCK_REALTIME (0) or CLOCK_MONOTONIC (1)
+--- @returns {Nat - nanoseconds from the clock's unspecified epoch}
+export read_ns := (clock_id) ~> do {
+  r := ffi.call(LIBC, "clock_gettime", [clock_id],
+    ["i32", "out_struct:{tv_sec:i64,tv_nsec:i64}"], "i32", false)
+  if r.ret < 0 {
+    e := ffi.errno()
+    error.raise("posix: clock_gettime: " + strerror(e))
+  } else {
+    r.buf.tv_sec * 1000000000 + r.buf.tv_nsec
+  }
+}

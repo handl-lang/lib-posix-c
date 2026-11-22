@@ -2,4 +2,10 @@ from "./time" import * as time
 
 test_time_now_positive :: assert time.now() > 0 = true
 
+test_time_now_ms_positive :: assert time.now_ms() > 0 = true
+
+test_time_instant_ns_monotonic :: assert time.instant_ns() >= 0 = true
+
+test_time_elapsed_ns_nonneg :: assert time.elapsed_ns(time.instant_ns()) >= 0 = true
+
 test_time_epoch_rough :: assert time.now() / 1000 - time.epoch() < 1 = true
