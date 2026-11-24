@@ -26,7 +26,7 @@ export resolve: (List(String)) ~[1]~> String := (parts) ~> str.join(parts, "/")
 --- @param {p} - the path
 --- @returns {String - the file name portion}
 export basename: String ~> String := (p) ~> do {
-  i = str.rfind(p, "/");
+  i := str.rfind(p, "/");
   if i > -1 {
     str.slice(p, i + 1, str.length(p))
   } else {
@@ -38,7 +38,7 @@ export basename: String ~> String := (p) ~> do {
 --- @param {p} - the path
 --- @returns {String - the directory portion}
 export dirname: String ~> String := (p) ~> do {
-  i = str.rfind(p, "/");
+  i := str.rfind(p, "/");
   if i > -1 {
     str.slice(p, 0, i)
   } else {
@@ -50,8 +50,8 @@ export dirname: String ~> String := (p) ~> do {
 --- @param {p} - the path
 --- @returns {String - the extension}
 export extname: String ~> String := (p) ~> do {
-  base = basename(p);
-  i = str.rfind(base, ".");
+  base := basename(p);
+  i := str.rfind(base, ".");
   if i > -1 {
     str.slice(base, i, str.length(base))
   } else {
