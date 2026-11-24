@@ -1,2 +1,2 @@
 -- lib-posix-c: package manifest.
-{ modules: ["posix-c"], deps: { grade: "branch:main", posix: "branch:main" }, description: "C backend for the POSIX ports (path, env, time, fs).", license: "MIT" }
+{ modules: ["posix-c"], deps: { posix: "branch:main" }, description: "C backend for the POSIX ports (path, env, time, fs).", license: "MIT" }
