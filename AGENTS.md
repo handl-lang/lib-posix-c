@@ -14,7 +14,7 @@ C backend for the POSIX ports (path, env, time, fs) — renamed from
 | `src/time.hnl` + `time.test.hnl` | time ops (`now_ms`/`instant_ns`/`elapsed_ns`/`epoch`/`now`, direct `clock_gettime` via `ffi.call`; folded from `lib-time-c`) |
 | `src/clock_gettime.hnl` | the `clock_gettime` ffi binding |
 | `src/fs.hnl` | fs ops over libc via `ffi.call` (`read_file`/`write_file`/`exists`/`list_dir`/`stat`/`lstat`/`is_dir`/`is_file`/`remove`/`rmdir`/`rename`/`mkdir`) |
-| `pkg.hnl`, `scripts/hnl-gate.sh`, `ci.sh` | manifest (dep `posix`) / gate / bupha entry |
+| `pkg.hnl`, `scripts/hnl-gate.sh`, `workflows/gate.yaml` | manifest (dep `posix`) / gate / bupha entry |
 
 ## Contract
 
