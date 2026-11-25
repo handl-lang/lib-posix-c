@@ -18,7 +18,7 @@ C backend for the POSIX ports (path, env, time, fs). Renamed from
 ```text
 src/             the .hnl sources (index, path, env, time, fs, clock_gettime + tests)
 pkg.hnl          package manifest — modules, deps, description, license
-ci.sh            bupha entry → scripts/hnl-gate.sh
+workflows/gate.yaml            bupha entry (handl-gates) → scripts/hnl-gate.sh
 ```
 
 ## Gate
